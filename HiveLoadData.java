@@ -22,7 +22,7 @@ public class HiveLoadData {
 
     public static void main(String[] args) throws SQLException {
         try {
-            Class.forName("org.apache.hive.jdbc.HiveDriver");
+            Class.forName("org.apache.hive:hive-jdbc");
         } catch (ClassNotFoundException e) {
             e.printStackTrace();
         }
