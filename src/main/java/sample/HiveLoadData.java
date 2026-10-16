@@ -1,81 +1,85 @@
 package sample;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Scanner;
+import java.util.regex.Pattern;
 
-public class HiveLoadData {
-    private static String getDBName() {
-        Scanner sc = new Scanner(System.in);
-        String db = null;
-        System.out.println("Enter the name of database");
-        db = sc.next();
-        return db;
-    }
+/**
+ * Creates a Hive database (if needed) and loads a local file into a table in it.
+ *
+ * <p>Usage: {@code java sample.HiveLoadData [file-path]}. The database and table
+ * names are read from stdin. Connection settings come from environment variables:
+ * {@code HIVE_JDBC_URL} (default {@code jdbc:hive2://localhost:10000/default}),
+ * {@code HIVE_USER} (default {@code hive}) and {@code HIVE_PASSWORD} (default empty).
+ */
+public final class HiveLoadData {
 
-    private static String getTableName() {
-        Scanner sc = new Scanner(System.in);
-        String tableName= null;
-        System.out.println("Enter the name of table");
-        tableName = sc.next();
-        return tableName;
+    static final String DEFAULT_URL = "jdbc:hive2://localhost:10000/default";
+    static final String DEFAULT_FILE = "/home/sample/Customers.txt";
+
+    // Hive identifiers: letters, digits and underscores. Names come from user input,
+    // so they are validated before being concatenated into HiveQL.
+    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,127}");
+
+    private HiveLoadData() {
     }
 
     public static void main(String[] args) throws SQLException {
-        try {
-            Class.forName("org.apache.hive:hive-jdbc");
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
+        String filePath = args.length > 0 ? args[0] : DEFAULT_FILE;
+        String url = env("HIVE_JDBC_URL", DEFAULT_URL);
+        String user = env("HIVE_USER", "hive");
+        String password = env("HIVE_PASSWORD", "");
+
+        Scanner in = new Scanner(System.in);
+        String databaseName = prompt(in, "Enter the name of database");
+        String tableName = prompt(in, "Enter the name of table");
+
+        try (Connection conn = DriverManager.getConnection(url, user, password);
+             Statement stmt = conn.createStatement()) {
+            stmt.execute(createDatabaseSql(databaseName));
+            System.out.println("Database " + databaseName + " is ready.");
+            stmt.execute(useDatabaseSql(databaseName));
+
+            String loadQuery = loadDataSql(filePath, tableName);
+            System.out.println("Running " + loadQuery);
+            stmt.execute(loadQuery);
+            System.out.printf("Load data into %s successful%n", tableName);
         }
-        Connection conn = DriverManager.getConnection("jdbc:hive2://localhost:10000/default", "hive", "");
-        Statement stmt = conn.createStatement();
-        String databaseName = getDBName();
-        stmt.execute("CREATE DATABASE " + databaseName);
-        System.out.println("Database " + databaseName + " created successfully.");
-        stmt.execute("USE " + databaseName);
-        String tableName = getTableName();
-        stmt.executeQuery("drop table "+tableName);
-        //Create table query
-/*
-        String sql = "CREATE TABLE IF NOT EXISTS "+tableName+ "(year int,month int,day_of_month int," +
-                "day_of_week int,dep_time string,crs_dep_time string,arr_time string,crs_arr_time string," +
-                "unique_carrier string,flight_num string,tail_num string,actual_elapsed_time int,crs_elapsed_time int," +
-                "air_time int,arr_delay int,dep_delay int,origin string,dest string," +
-                "distance int,taxi_in int,taxi_out int,cancelled int," +
-                "cancellation_code string,diverted int,carrier_delay int,weather_delay int,nas_delay int,security_delay int," +
-                "late_aircraft_delay int) " +
-                " row format delimited fields terminated by '" + "," + "'" +
-                " lines terminated by '" + "\\n" + "' TBLPROPERTIES (\"skip.header.line.count\"=\"1\")";
-        stmt.execute(sql);
-        System.out.println(String.format("Table %s created.",tableName));
-    */
-        //show tables
+    }
 
-        /*String showTable="show tables '"+tableName+"'";
-        System.out.println("Running "+showTable);
-        ResultSet res=stmt.executeQuery(showTable);
-        if(res.next()){
-            System.out.println(res.getString(1));
-        }*/
+    static String createDatabaseSql(String databaseName) {
+        return "CREATE DATABASE IF NOT EXISTS " + identifier(databaseName);
+    }
 
-        //describe table
+    static String useDatabaseSql(String databaseName) {
+        return "USE " + identifier(databaseName);
+    }
 
-       /* String descTable="describe "+tableName;
-        System.out.println("Running: " +descTable);
-        res=stmt.executeQuery(descTable);
-        while(res.next()){
-            System.out.println(res.getString(1)+"\t"+res.getString(2)+"\t"+res.getString(3));
-        }*/
+    static String loadDataSql(String filePath, String tableName) {
+        return "LOAD DATA LOCAL INPATH '" + escapeLiteral(filePath) + "' INTO TABLE " + identifier(tableName);
+    }
 
+    static String identifier(String name) {
+        if (name == null || !IDENTIFIER.matcher(name).matches()) {
+            throw new IllegalArgumentException("Invalid Hive identifier: " + name);
+        }
+        return name;
+    }
 
-        //load data into table
+    static String escapeLiteral(String value) {
+        return value.replace("\\", "\\\\").replace("'", "\\'");
+    }
 
-        String filepath = "/home/sample/Customers.txt";
-        String loadQuery = "LOAD DATA LOCAL INPATH '" + filepath + "' into table " + tableName;
-        stmt.execute(loadQuery);
-        System.out.println(" Running " + loadQuery);
-        System.out.println(String.format("Load Data into %s successful", tableName));
-        //res.close();
-        stmt.close();
-        conn.close();
+    private static String prompt(Scanner in, String message) {
+        System.out.println(message);
+        return identifier(in.next());
+    }
+
+    private static String env(String name, String defaultValue) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? defaultValue : value;
     }
 }
